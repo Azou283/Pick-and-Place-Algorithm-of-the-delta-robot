@@ -1,0 +1,115 @@
+import cv2
+import serial
+import time
+import numpy as np
+from ultralytics import YOLO
+
+# --- Configuration ---
+SERIAL_PORT    = "/dev/ttyUSB0"
+BAUD_RATE      = 115200
+CONFIDENCE_THR = 0.60
+FRAME_WIDTH    = 640
+FRAME_HEIGHT   = 480
+
+WORKSPACE_X_MM = 300.0
+WORKSPACE_Y_MM = 200.0
+PICK_Z_MM      = -150.0
+
+BELT_LEFT   = 0
+BELT_RIGHT  = FRAME_WIDTH
+BELT_TOP    = 0
+BELT_BOTTOM = FRAME_HEIGHT
+
+BIN_MAP = {
+    "plastic":    "bin_plastic",
+    "metal":      "bin_metal",
+    "paper":      "bin_paper",
+    "glass":      "bin_glass",
+    "cardboard":  "bin_cardboard",
+}
+
+# H is the 3x3 homography matrix computed during calibration
+H = np.array([...])  # filled during calibration session
+
+def pixel_to_mm(px, py):
+    pt = np.array([px, py, 1.0], dtype=np.float64)
+    mapped = H @ pt
+    x_mm = mapped[0] / mapped[2]
+    y_mm = mapped[1] / mapped[2]
+    return round(x_mm, 2), round(y_mm, 2)
+
+def send_command(ser, x, y, z, waste_class):
+    cmd = f"{x},{y},{z},{waste_class}\n"
+    ser.write(cmd.encode("utf-8"))
+    print(f"[Pi] Sent: {cmd.strip()}")
+
+    timeout = time.time() + 5.0
+    while time.time() < timeout:
+        if ser.in_waiting:
+            ack = ser.readline().decode("utf-8").strip()
+            if ack == "DONE":
+                print("[Pi] Arduino acknowledged: DONE")
+                return True
+
+    print("[Pi] WARNING: No acknowledgment received.")
+    return False
+
+def main():
+    model = YOLO("yolov8s_waste.pt")
+    print("[Pi] YOLOv8s model loaded.")
+
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  FRAME_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+
+    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+    time.sleep(2)
+    print(f"[Pi] Serial open on {SERIAL_PORT} at {BAUD_RATE} baud.")
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                continue
+
+            results = model.predict(source=frame,
+                                    conf=CONFIDENCE_THR,
+                                    verbose=False)
+
+            for result in results:
+                for box in result.boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    px = int((x1 + x2) / 2)
+                    py = int((y1 + y2) / 2)
+
+                    class_id   = int(box.cls[0])
+                    confidence = float(box.conf[0])
+                    label      = model.names[class_id].lower()
+
+                    if label not in BIN_MAP:
+                        continue
+
+                    x_mm, y_mm = pixel_to_mm(px, py)
+
+                    print(f"[Pi] Detected: {label} ({confidence:.2f}) "
+                          f"at pixel ({px},{py}) -> "
+                          f"mm ({x_mm},{y_mm})")
+
+                    send_command(ser, x_mm, y_mm, PICK_Z_MM, label)
+                    time.sleep(0.5)
+                    break
+
+            annotated = results[0].plot() if results else frame
+            cv2.imshow("Waste Sorter - YOLOv8s", annotated)
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+
+    finally:
+        cap.release()
+        ser.close()
+        cv2.destroyAllWindows()
+        print("[Pi] Shutdown complete.")
+
+if __name__ == "__main__":
+    main()
