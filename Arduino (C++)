@@ -1,0 +1,178 @@
+#include <AccelStepper.h>
+#include <math.h>
+
+// NEMA 23 steppers driven by TB6600 drivers
+// AccelStepper::DRIVER = step/direction interface
+AccelStepper stepper1(AccelStepper::DRIVER, 2, 5);  // STEP=2, DIR=5
+AccelStepper stepper2(AccelStepper::DRIVER, 3, 6);  // STEP=3, DIR=6
+AccelStepper stepper3(AccelStepper::DRIVER, 4, 7);  // STEP=4, DIR=7
+
+const int PIN_GRIPPER = 9;  // Gripper solenoid or dedicated servo pin
+
+// Stepper parameters
+const float STEPS_PER_DEG  = 17.78;  // 3200 steps/rev / 180 deg
+const float MAX_SPEED       = 1000.0; // steps/s
+const float ACCELERATION    = 500.0;  // steps/s^2
+
+// Delta robot geometry (mm)
+const float e  = 50.0;   // moving platform side length (Sp)
+const float f  = 300.0;  // base platform side length (Sb)
+const float re = 320.0;  // forearm length (l)
+const float rf = 180.0;  // upper arm length (L)
+
+const float sqrt3  = sqrt(3.0);
+const float pi     = M_PI;
+const float sin120 = sqrt3 / 2.0;
+const float cos120 = -0.5;
+const float tan30  = 1.0 / sqrt3;
+const float sin30  = 0.5;
+
+struct BinPos { float x, y, z; };
+
+BinPos BIN_PLASTIC   = {  150.0,    0.0, -120.0 };
+BinPos BIN_METAL     = { -150.0,    0.0, -120.0 };
+BinPos BIN_PAPER     = {    0.0,  150.0, -120.0 };
+BinPos BIN_GLASS     = {    0.0, -150.0, -120.0 };
+BinPos BIN_CARDBOARD = {  100.0,  100.0, -120.0 };
+const float TRAVEL_Z = -50.0;
+
+BinPos getBinPos(String cls)
+{
+    if (cls == "plastic")    return BIN_PLASTIC;
+    if (cls == "metal")      return BIN_METAL;
+    if (cls == "paper")      return BIN_PAPER;
+    if (cls == "glass")      return BIN_GLASS;
+    return BIN_CARDBOARD;
+}
+
+int deltaCalcAngleYZ(float x0, float y0, float z0, float &theta)
+{
+    float y1 = -0.5 * tan30 * f;
+    y0 -= 0.5 * tan30 * e;
+
+    float a = (x0*x0 + y0*y0 + z0*z0 + rf*rf - re*re - y1*y1) / (2.0 * z0);
+    float b = (y1 - y0) / z0;
+
+    float d = -(a + b*y1)*(a + b*y1) + rf*(b*b*rf + rf);
+    if (d < 0) return -1;
+
+    float yj = (y1 - a*b - sqrt(d)) / (b*b + 1);
+    float zj = a + b*yj;
+
+    theta = atan2(-zj, (yj - y1)) * 180.0 / pi + 90.0;
+    if (theta > 180) return -1;
+    return 0;
+}
+
+int deltaCalcInverse(float x0, float y0, float z0, float &t1, float &t2, float &t3)
+{
+    t1 = t2 = t3 = 0.0;
+
+    int s1 = deltaCalcAngleYZ(x0, y0, z0, t1);
+    int s2 = deltaCalcAngleYZ(x0*cos120 + y0*sin120, y0*cos120 - x0*sin120, z0, t2);
+    int s3 = deltaCalcAngleYZ(x0*cos120 - y0*sin120, y0*cos120 + x0*sin120, z0, t3);
+
+    return (s1 + s2 + s3 == 0) ? 0 : -1;
+}
+
+void moveSteppersTo(long steps1, long steps2, long steps3)
+{
+    stepper1.moveTo(steps1);
+    stepper2.moveTo(steps2);
+    stepper3.moveTo(steps3);
+
+    while (stepper1.distanceToGo() != 0 ||
+           stepper2.distanceToGo() != 0 ||
+           stepper3.distanceToGo() != 0)
+    {
+        stepper1.run();
+        stepper2.run();
+        stepper3.run();
+    }
+}
+
+void moveTo(float x, float y, float z)
+{
+    float t1, t2, t3;
+
+    if (deltaCalcInverse(x, y, z, t1, t2, t3) != 0) {
+        Serial.println("IK_ERROR");
+        return;
+    }
+
+    long s1 = (long)(t1 * STEPS_PER_DEG);
+    long s2 = (long)(t2 * STEPS_PER_DEG);
+    long s3 = (long)(t3 * STEPS_PER_DEG);
+
+    moveSteppersTo(s1, s2, s3);
+}
+
+void gripperClose() { digitalWrite(PIN_GRIPPER, HIGH); delay(300); }
+void gripperOpen()  { digitalWrite(PIN_GRIPPER, LOW);  delay(300); }
+
+void pickAndPlace(float px, float py, float pz, float dx, float dy, float dz)
+{
+    moveTo(px, py, TRAVEL_Z);   // move above pick position
+    moveTo(px, py, pz);          // descend to object
+
+    gripperClose();
+    delay(200);
+
+    moveTo(px, py, TRAVEL_Z);   // lift up
+    moveTo(dx, dy, TRAVEL_Z);   // travel over bin
+    moveTo(dx, dy, dz);          // descend into bin
+
+    gripperOpen();
+    delay(200);
+
+    moveTo(0.0, 0.0, TRAVEL_Z); // return to home
+}
+
+void setup()
+{
+    Serial.begin(115200);
+
+    pinMode(PIN_GRIPPER, OUTPUT);
+    digitalWrite(PIN_GRIPPER, LOW);
+
+    stepper1.setMaxSpeed(MAX_SPEED);
+    stepper1.setAcceleration(ACCELERATION);
+    stepper2.setMaxSpeed(MAX_SPEED);
+    stepper2.setAcceleration(ACCELERATION);
+    stepper3.setMaxSpeed(MAX_SPEED);
+    stepper3.setAcceleration(ACCELERATION);
+
+    moveTo(0.0, 0.0, TRAVEL_Z);
+    Serial.println("READY");
+}
+
+void loop()
+{
+    if (Serial.available())
+    {
+        String msg = Serial.readStringUntil('\n');
+        msg.trim();
+
+        int c1 = msg.indexOf(',');
+        int c2 = msg.indexOf(',', c1 + 1);
+        int c3 = msg.indexOf(',', c2 + 1);
+
+        if (c1 < 0 || c2 < 0 || c3 < 0) {
+            Serial.println("PARSE_ERROR");
+            return;
+        }
+
+        float x = msg.substring(0, c1).toFloat();
+        float y = msg.substring(c1+1, c2).toFloat();
+        float z = msg.substring(c2+1, c3).toFloat();
+
+        String cls = msg.substring(c3+1);
+        cls.toLowerCase();
+
+        BinPos bin = getBinPos(cls);
+
+        pickAndPlace(x, y, z, bin.x, bin.y, bin.z);
+
+        Serial.println("DONE");
+    }
+}
