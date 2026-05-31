@@ -55,8 +55,8 @@ def send_command(ser, x, y, z, waste_class):
     return False
 
 def main():
-    model = YOLO("yolov8s_waste.pt")
-    print("[Pi] YOLOv8s model loaded.")
+    model = YOLO("yolov8n_waste.pt")
+    print("[Pi] YOLOv8n model loaded.")
 
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  FRAME_WIDTH)
@@ -100,7 +100,7 @@ def main():
                     break
 
             annotated = results[0].plot() if results else frame
-            cv2.imshow("Waste Sorter - YOLOv8s", annotated)
+            cv2.imshow("Waste Sorter - YOLOv8n", annotated)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
