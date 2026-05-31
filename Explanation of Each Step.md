@@ -6,7 +6,7 @@ A pick-and-place robot that detects and sorts waste in real time using computer 
 
 ## 🧠 How It Works
 
-A camera streams live video of a conveyor belt to a **Raspberry Pi 5**, which runs a **YOLOv8s** model to detect and classify waste objects. The Pi then sends pick/drop coordinates over **serial (UART)** to an **Arduino**, which drives a **delta robot** to physically sort the item into the correct bin.
+A camera streams live video of a conveyor belt to a **Raspberry Pi 5**, which runs a **YOLOv8n** model to detect and classify waste objects. The Pi then sends pick/drop coordinates over **serial (UART)** to an **Arduino**, which drives a **delta robot** to physically sort the item into the correct bin.
 
 ```
 Camera → Raspberry Pi (YOLO detection) → Arduino (Inverse Kinematics) → Delta Robot
@@ -30,7 +30,7 @@ Camera → Raspberry Pi (YOLO detection) → Arduino (Inverse Kinematics) → De
 
 ### Step 1 — Object Detection (Raspberry Pi)
 
-- A YOLOv8s model processes each camera frame continuously.
+- A YOLOv8n model processes each camera frame continuously.
 - For each detection, it returns:
   - **Class label** — `plastic`, `metal`, `paper`, `glass`, or `cardboard`
   - **Confidence score** — detections below **60%** are discarded
