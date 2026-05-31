@@ -15,10 +15,10 @@ const float MAX_SPEED       = 1000.0; // steps/s
 const float ACCELERATION    = 500.0;  // steps/s^2
 
 // Delta robot geometry (mm)
-const float e  = 50.0;   // moving platform side length (Sp)
-const float f  = 300.0;  // base platform side length (Sb)
-const float re = 320.0;  // forearm length (l)
-const float rf = 180.0;  // upper arm length (L)
+const float e  = 76.2;   // moving platform side length (Sp)
+const float f  = 394.9;  // base platform side length (Sb)
+const float re = 312.0;  // forearm length (l)
+const float rf = 150.0;  // upper arm length (L)
 
 const float sqrt3  = sqrt(3.0);
 const float pi     = M_PI;
